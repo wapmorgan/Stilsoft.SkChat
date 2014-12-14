@@ -9,7 +9,7 @@
 #include <vector>
 #include <map>
 #include "getopt.h"
-#include <time.h>
+	
 #include <sys/types.h>
 #define DEFAULT_PORT "27015"
 #define BUFFER_LENGTH 512
@@ -18,6 +18,7 @@ using namespace std;
 
 //vector<string> usersList;
 map<SOCKET,string> socketsList;
+map<string,string> fileTransmitters;
 fd_set readfds;
 
 string generate_users_list();
@@ -160,7 +161,6 @@ int _tmain(int argc, _TCHAR* argv[])
 		for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it)
 		{
 			if (FD_ISSET(it->first, &read_file_d)) {
-			//if ((rResult = recv(it->first, recvbuf, BUFFER_LENGTH, 0)) > 0) {
 				rResult = recv(it->first, recvbuf, BUFFER_LENGTH, 0);
 				
 				// ready for reading
@@ -195,33 +195,56 @@ int _tmain(int argc, _TCHAR* argv[])
 					int n = 0;
 					int n2 = 0;
 					memset(ns, 0, 5);
-					strncpy_s(ns, 5, recvbuf+5, 2);
-					n = atoi(ns);
-					userto = string(recvbuf, 7, n);
-					cout << " to " << userto;
-					memset(ns, 0, 5);
-					strncpy_s(ns, 5, recvbuf+7+n, 3);
-					n2 = atoi(ns);
-					cout << " of " << n2 << " byte(s)" << endl;
-					text = string(recvbuf, 7+n+3, n2);
-					cout << "text: " << text << endl;
-
-					// поиск пользователя
-					for (map<SOCKET,string>::iterator it2 = socketsList.begin(); it2 != socketsList.end(); ++it2) {
-						if (it2->second.compare(userto) == 0)
+					if (strlen(recvbuf) >= 7)
+					{
+						strncpy_s(ns, 5, recvbuf+5, 2);
+						n = atoi(ns);
+						if (strlen(recvbuf) >= 7+n)
 						{
-							cout << "it2->second " << it2->second << endl;
-							sendbuf.clear();
-							sendbuf += "msg ";
-							sendbuf += it->second;
-							sendbuf += ":";
-							sendbuf += text;
-							sendbuf += "\r\n";
-							send(it2->first, sendbuf.c_str(), sendbuf.length(), 0);
-							break;
+							userto = string(recvbuf, 7, n);
+							cout << " to " << userto;
+							memset(ns, 0, 5);
+							if (strlen(recvbuf) >= 10+n)
+							{
+								strncpy_s(ns, 5, recvbuf+7+n, 3);
+								n2 = atoi(ns);
+								cout << " of " << n2 << " byte(s)" << endl;
+								text = string(recvbuf, 7+n+3, n2);
+								cout << "text: " << text << endl;
+
+								// поиск пользователя
+								for (map<SOCKET,string>::iterator it2 = socketsList.begin(); it2 != socketsList.end(); ++it2) {
+									if (it2->second.compare(userto) == 0)
+									{
+										cout << "it2->second " << it2->second << endl;
+											sendbuf.clear();
+											sendbuf += "msg ";
+											sendbuf += it->second;
+											sendbuf += ":";
+											sendbuf += text;
+											//sendbuf += "\r\n";
+											send(it2->first, sendbuf.c_str(), sendbuf.length(), 0);
+										break;
+									}
+								}
+							}
+							else
+							{
+								cout << "invalid message" << endl;
+							}
+						}
+						else
+						{
+							cout << "invalid message" << endl;
 						}
 					}
-				}
+					else
+					{
+						cout << "invalid message" << endl;
+					}
+				}// else if (strncmp(recvbuf, "file", 4) == 0) {
+					// создаем отдельный серверный сокет
+				//}
 				memset(recvbuf, 0, rResult);
 			}// else if (FD_ISSET(it->first, &except_file_d)) {
 			//	cout << it->second << " in exceptfds" << endl;
@@ -261,7 +284,7 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 		//if (find(usersList.begin(), usersList.end(), userNick) != usersList.end()) {
 		if (searchInUsers(userNick) != socketsList.end()) {
 			cout << "err:already logged" << endl;
-			send(clientSocket, "err\r\n", 5, 0);
+			send(clientSocket, "err", 3, 0);
 			Sleep(1500);
 			closesocket(clientSocket);
 			continue;
