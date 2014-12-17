@@ -9,7 +9,6 @@
 #include <vector>
 #include <map>
 #include "getopt.h"
-	
 #include <sys/types.h>
 #define DEFAULT_PORT "27015"
 #define BUFFER_LENGTH 512
@@ -53,7 +52,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			break;
 		}
 	}
-	
+
 	HANDLE thread;
 	DWORD idthread;
 
@@ -80,7 +79,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		WSACleanup();
 		return 1;
 	}
-	cout << "started at port " << port << endl;
+
+	cout << "Server started at port " << port << endl;
 
 	// создание сокета
 	SOCKET listenSocket = INVALID_SOCKET;
@@ -97,7 +97,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	iResult = bind(listenSocket, result->ai_addr, result->ai_addrlen);
 	if(iResult == SOCKET_ERROR)
 	{
-		std::cout << "Bind failed with error: " << WSAGetLastError(); 
+		std::cout << "Bind failed with error: " << WSAGetLastError();
 		freeaddrinfo(result);
 		closesocket(listenSocket);
 		WSACleanup();
@@ -107,7 +107,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	freeaddrinfo(result);
 
 	// прослушивание подключений
-	if ( listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
+	if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
 	{
 		std::cout << "Listen failed with error: " << WSAGetLastError();
 		closesocket(listenSocket);
@@ -141,8 +141,10 @@ int _tmain(int argc, _TCHAR* argv[])
 	while (1) {
 		memcpy(&read_file_d, &readfds, sizeof(readfds));
 		memcpy(&except_file_d, &readfds, sizeof(readfds));
-		cout << "iteration" << endl;
-		cout << read_file_d.fd_count << endl;
+		if (dflag) {
+			cout << "iteration" << endl;
+			cout << read_file_d.fd_count << endl;
+		}
 		if (socketsList.size() == 0)
 		{
 			Sleep(1000);
@@ -154,8 +156,10 @@ int _tmain(int argc, _TCHAR* argv[])
 			cout << errno << endl;
 			return 1;
 		}
-		cout << "select returned " << sResult << endl;
-		cout << " and fd_set.size = " << read_file_d.fd_count << endl;
+		if (dflag) {
+			cout << "select returned " << sResult << endl;
+			cout << " and fd_set.size = " << read_file_d.fd_count << endl;
+		}
 		if (sResult == 0)
 			continue;
 		for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it)
@@ -167,12 +171,13 @@ int _tmain(int argc, _TCHAR* argv[])
 				// read from SOCKET
 				if (rResult <= 0)
 				{
-					cout << "rResult " << rResult << endl;
+					if (dflag)
+						cout << "rResult " << rResult << endl;
+
 					if (rResult == 0)
 						cout << it->second << " disconnected" << endl;
 					else
 						cout << it->second << " aborted connection" << endl;
-		
 					FD_CLR(it->first, &readfds);
 					socketsList.erase(it);
 					closesocket(it->first);
@@ -187,7 +192,9 @@ int _tmain(int argc, _TCHAR* argv[])
 					}
 					break;
 				}
-				cout << it->second << " commands " << recvbuf << endl;
+				if (dflag)
+					cout << it->second << " commands " << recvbuf << endl;
+
 				if (strncmp(recvbuf, "send", 4) == 0)
 				{
 					cout << it->second << " sends message";
@@ -269,7 +276,8 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 	while (1) {
 		clientSocket = accept(listenSocket, NULL, NULL);
 		// создание отдельного потока и обработка запроса в нем
-		cout << "new incoming socket" << endl;
+		if (dflag)
+			cout << "new incoming socket" << endl;
 		
 		if ((iResult = recv(clientSocket, recvbuf, BUFFER_LENGTH, 0)) == -1) {
 			cout << "error " << WSAGetLastError();
@@ -505,4 +513,3 @@ map<SOCKET,string>::iterator searchInUsers(string username)
     }
     return iRet;
 }
-
