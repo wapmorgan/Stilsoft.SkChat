@@ -142,8 +142,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		memcpy(&read_file_d, &readfds, sizeof(readfds));
 		memcpy(&except_file_d, &readfds, sizeof(readfds));
 		if (dflag) {
-			cout << "iteration" << endl;
-			cout << read_file_d.fd_count << endl;
+			//cout << "iteration" << endl;
+			//cout << read_file_d.fd_count << endl;
 		}
 		if (socketsList.size() == 0)
 		{
