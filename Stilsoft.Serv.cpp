@@ -16,8 +16,7 @@
 
 using namespace std;
 
-//vector<string> usersList;
-map<SOCKET,string> socketsList;
+map<string,SOCKET> usersList;
 map<string,vector<string>> roomsList;
 fd_set readfds;
 map<int,vector<string>> conferences;
@@ -26,13 +25,10 @@ string generate_users_list();
 string generate_rooms_list();
 string generate_list();
 DWORD WINAPI connections_accepter(LPVOID lpParam);
-map<SOCKET,string>::iterator searchInUsers(string username);
 map<string,vector<string>>::iterator createRoomIfNotExists(string room);
-map<int,vector<string>>::iterator findInConferences(map<int,vector<string>> conferences, vector<string> users);
 void lstCommand(SOCKET socket);
 
 void notificateConferenceUsers(int index, map<int,vector<string>>::iterator users);
-SOCKET getSocketByUser(string user);
 
 _TCHAR  *optarg;
 _TCHAR *__progname;
@@ -156,7 +152,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			//cout << "iteration" << endl;
 			//cout << read_file_d.fd_count << endl;
 		}
-		if (socketsList.size() == 0)
+		if (usersList.size() == 0)
 		{
 			Sleep(1000);
 			continue;
@@ -173,10 +169,10 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 		if (sResult == 0)
 			continue;
-		for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it)
+		for (map<string,SOCKET>::iterator it = usersList.begin(); it != usersList.end(); ++it)
 		{
-			if (FD_ISSET(it->first, &read_file_d)) {
-				rResult = recv(it->first, recvbuf, BUFFER_LENGTH, 0);
+			if (FD_ISSET(it->second, &read_file_d)) {
+				rResult = recv(it->second, recvbuf, BUFFER_LENGTH, 0);
 				
 				// ready for reading
 				// read from SOCKET
@@ -186,19 +182,19 @@ int _tmain(int argc, _TCHAR* argv[])
 						cout << "rResult " << rResult << endl;
 
 					if (rResult == 0)
-						cout << it->second << " disconnected" << endl;
+						cout << it->first << " disconnected" << endl;
 					else
-						cout << it->second << " aborted connection" << endl;
-					FD_CLR(it->first, &readfds);
+						cout << it->first << " aborted connection" << endl;
+					FD_CLR(it->second, &readfds);
 					// уведомить остальные сокеты
-					string user_nick = it->second;
-					SOCKET user_socket = it->first;
-					socketsList.erase(it);
+					string user_nick = it->first;
+					SOCKET user_socket = it->second;
+					usersList.erase(it);
 					closesocket(user_socket);
 
-					for (map<SOCKET,string>::iterator it2 = socketsList.begin(); it2 != socketsList.end(); ++it2) {
-						if (it2->second.compare(user_nick) != 0)
-							lstCommand(it2->first);
+					for (map<string,SOCKET>::iterator it2 = usersList.begin(); it2 != usersList.end(); ++it2) {
+						if (it2->first.compare(user_nick) != 0)
+							lstCommand(it2->second);
 					}
 					// удаляем его из конференций
 					for (map<int,vector<string>>::iterator it2 = conferences.begin(); it2 != conferences.end(); ++it2)
@@ -221,15 +217,14 @@ int _tmain(int argc, _TCHAR* argv[])
 							}
 						}
 					}
-					
 					break;
 				}
 				if (dflag)
-					cout << it->second << " commands " << recvbuf << endl;
+					cout << it->first << " commands " << recvbuf << endl;
 
 				if (strncmp(recvbuf, "send", 4) == 0)
 				{
-					cout << it->second << " sends message";
+					cout << it->first << " sends message";
 					char ns[5];
 					int n = 0;
 					int n2 = 0;
@@ -252,55 +247,48 @@ int _tmain(int argc, _TCHAR* argv[])
 								cout << "text: " << text << endl;
 
 								// поиск пользователя
-								map<SOCKET,string>::iterator it2;
-								for (it2 = socketsList.begin(); it2 != socketsList.end(); ++it2) {
-									if (it2->second.compare(userto) == 0)
-									{
-										cout << "it2->second " << it2->second << endl;
-											sendbuf.clear();
-											sendbuf += "msg ";
-											sendbuf += it->second;
-											sendbuf += ":";
-											sendbuf += text;
-											//sendbuf += "\r\n";
-											send(it2->first, sendbuf.c_str(), sendbuf.length(), 0);
-										break;
-									}
+								map<string,SOCKET>::iterator it2 = usersList.find(userto);
+								if (it2 != usersList.end())
+								{
+									sendbuf.clear();
+									sendbuf += "msg ";
+									sendbuf += it->first;
+									sendbuf += ":";
+									sendbuf += text;
+									//sendbuf += "\r\n";
+									send(it2->second, sendbuf.c_str(), sendbuf.length(), 0);
+									break;
 								}
 								// иначе, поиск комнаты
-								if (it2 == socketsList.end() && userto[0] == '#')
+								if (userto[0] == '#')
 								{
 									userto = userto.substr(1, string::npos);
 									int index = atoi(userto.c_str());
-									map<int,vector<string>>::iterator it3;
+									map<int,vector<string>>::iterator conf_it;
 									// цикл поиска комнаты
-
-									for (it3 = conferences.begin(); it3 != conferences.end(); ++it3)
+									conf_it = conferences.find(index);
+									if (conf_it != conferences.end())
 									{
-										if (it3->first == index)
+										// защита от письма в комнату, в которой не состоишь
+										if (find(conf_it->second.begin(), conf_it->second.end(), it->first) != conf_it->second.end())
 										{
-											// защита от письма в комнату, в которой не состоишь
-											if (find(it3->second.begin(), it3->second.end(), it->second) != it3->second.end())
+											sendbuf.clear();
+											sendbuf += "msg #";
+											sendbuf += to_string(conf_it->first);
+											sendbuf += "|";
+											sendbuf += it->first;
+											sendbuf += ":";
+											sendbuf += text;
+											// цикл перебора пользователей
+											for (vector<string>::iterator it4 = conf_it->second.begin(); it4 != conf_it->second.end(); ++it4)
 											{
-												// цикл перебора пользователей
-												for (vector<string>::iterator it4 = it3->second.begin(); it4 != it3->second.end(); ++it4)
-												{
-													if (it->second.compare(*it4) == 0)
-														continue;
-													// получение сокета пользователя
-													map<SOCKET,string>::iterator user = searchInUsers(*it4);
-													sendbuf.clear();
-													sendbuf += "msg #";
-													sendbuf += to_string(it3->first);
-													sendbuf += "|";
-													sendbuf += it->second;
-													sendbuf += ":";
-													sendbuf += text;
-													send(user->first, sendbuf.c_str(), sendbuf.length(), 0);
-												}
-												break;
+												if (it->first.compare(*it4) == 0)
+													continue;
+												// получение сокета пользователя
+												map<string,SOCKET>::iterator user = usersList.find(*it4);
+												send(user->second, sendbuf.c_str(), sendbuf.length(), 0);
 											}
-											
+											break;
 										}
 									}
 								}
@@ -333,15 +321,15 @@ int _tmain(int argc, _TCHAR* argv[])
 						users.push_back(usersString.substr(start, pos - start));
 					}
 					sort(users.begin(), users.end());
-					if (find(users.begin(), users.end(), it->second) == users.end())
+					if (find(users.begin(), users.end(), it->first) == users.end())
 					{
 						cout << "err:not present" << endl;
-						send(it->first, "err", 3, 0);
+						send(it->second, "err", 3, 0);
 					} 
 					else if (users.size() < 3)
 					{
 						cout << "err:invalid command" << endl;
-						send(it->first, "err", 3, 0);
+						send(it->second, "err", 3, 0);
 					}
 					else
 					{
@@ -372,107 +360,8 @@ int _tmain(int argc, _TCHAR* argv[])
 							notificateConferenceUsers(index, pos);
 						}
 					}
-					//cout << it->second << " joins room ";
-					/*char ns[5];
-					int n = 0;
-					string room;
-					memset(ns, 0, 5);
-					if (strlen(recvbuf) >= 7)
-					{
-						strncpy_s(ns, 5, recvbuf+5, 2);
-						n = atoi(ns);
-						if (strlen(recvbuf) >= 7+n)
-						{
-							room = string(recvbuf, 7, n);
-							cout << "#" << room << endl;
-							// поиск комнаты
-							map<string,vector<string>>::iterator pos;
-							pos = roomsList.find(room);
-							if (pos == roomsList.end())
-							{
-								cout << " new room " << endl;
-								vector<string> vec;
-								vec.push_back(it->second);
-								roomsList.insert(pair<string,vector<string>>(room, vec));
-								// уведомить остальные сокеты
-								sendbuf.clear();
-								sendbuf += "lst ";
-								sendbuf += generate_rooms_list();
-								sendbuf += "\r\n";
-								for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it) {
-									send(it->first, sendbuf.c_str(), sendbuf.length(), 0);
-								}
-							}
-							else if (find(pos->second.begin(), pos->second.end(), it->second) == pos->second.end())
-							{
-								pos->second.push_back(it->second);
-								notificateRoomUsers(room);
-							}
-						}
-						else
-						{
-							cout << "invalid room command" << endl;
-						}
-					}
-					else
-					{
-						cout << "invalid room command" << endl;
-					}
-					*/
-				/* } else if (strncmp(recvbuf, "quit", 4) == 0) {
-					cout << it->second << " leaves room ";
-					char ns[5];
-					int n = 0;
-					string room;
-					memset(ns, 0, 5);
-					if (strlen(recvbuf) >= 7)
-					{
-						strncpy_s(ns, 5, recvbuf+5, 2);
-						n = atoi(ns);
-						if (strlen(recvbuf) >= 7+n)
-						{
-							room = string(recvbuf, 7, n);
-							cout << "#" << room << endl;
-							map<string,vector<string>>::iterator pos = roomsList.find(room);
-							if (pos != roomsList.end())
-							{
-								vector<string>::iterator pos2 = find(pos->second.begin(), pos->second.end(), it->second);
-								if (pos2 != pos->second.end())
-								{
-									pos->second.erase(pos2);
-									if (pos->second.size() == 0)
-									{
-										roomsList.erase(pos);
-										// уведомить сокет о комнатах
-										sendbuf.clear();
-										sendbuf += "lst ";
-										sendbuf += generate_rooms_list();
-										sendbuf += "\r\n";
-										for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it) {
-											send(it->first, sendbuf.c_str(), sendbuf.length(), 0);
-										}
-									}
-									else
-									{
-										notificateRoomUsers(pos->first);
-									}
-								}
-							}
-						}
-						else
-						{
-							cout << "invalid quit command" << endl;
-						}
-					}
-					else
-					{
-						cout << "invalid quit command" << endl;
-					}
-				}*/// else if (strncmp(recvbuf, "file", 4) == 0) {
-					// создаем отдельный серверный сокет
-				//}
 				} else if (strncmp(recvbuf, "list", 4) == 0) {
-					lstCommand(it->first);
+					lstCommand(it->second);
 				} else if (strncmp(recvbuf, "quit", 4) == 0) {
 					
 				}
@@ -512,9 +401,7 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 
 		// проверка занятости ника
 
-		//if (usersList.find(userNick) != usersList.end()) {
-		//if (find(usersList.begin(), usersList.end(), userNick) != usersList.end()) {
-		if (searchInUsers(userNick) != socketsList.end()) {
+		if (usersList.find(userNick) != usersList.end()) {
 			cout << "err:already logged" << endl;
 			send(clientSocket, "err", 3, 0);
 			Sleep(1500);
@@ -523,16 +410,12 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 		}
 
 		ioctlsocket(clientSocket, FIONBIO, (unsigned long*)&ulMode);
-		socketsList.insert(pair<SOCKET,string>(clientSocket, userNick));
+		usersList.insert(pair<string,SOCKET>(userNick, clientSocket));
 		FD_SET(clientSocket, &readfds);
 
 		// уведомить остальные сокеты
-		sendbuf.clear();
-		sendbuf += "lst ";
-		sendbuf += generate_users_list();
-		sendbuf += "\r\n";
-		for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it) {
-			send(it->first, sendbuf.c_str(), sendbuf.length(), 0);
+		for (map<string,SOCKET>::iterator it = usersList.begin(); it != usersList.end(); ++it) {
+			lstCommand(it->second);
 		}
 		// уведомить сокет о комнатах
 		if (roomsList.size() > 0)
@@ -543,290 +426,47 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 			sendbuf += "\r\n";
 			send(clientSocket, sendbuf.c_str(), sendbuf.length(), 0);
 		}
-
-		
 	}
 	closesocket(listenSocket);
 	WSACleanup();
 	return 0;
 }
 
-/*
-DWORD WINAPI second(LPVOID lpParam) {
-	SOCKET ClientSocket = (SOCKET)lpParam;
-	// обмен данными
-	
-	int iSendResult;
-	int iResult;
-	string userNick;
 
-	if ((iResult = recv(ClientSocket, recvbuf, BUFFER_LENGTH, 0)) == -1)
-	{
-		cout << "error " << WSAGetLastError();
-		return WSAGetLastError();
-	}
-	userNick = string(recvbuf, iResult);
-	cout << "user nick: " << userNick << endl;
-	
 
-	// проверка занятости ника
-	if (usersList.find(userNick) != usersList.end()) {
-		cout << "err:already logged" << endl;
-		send(ClientSocket, "err:logged\r\n", 12, 0);
-		Sleep(1500);
-		closesocket(ClientSocket);
-		return -1;
-	}
-
-	// добавляем ник в список
-	//vector<message> messages;
-	//usersList.insert(pair<string,vector<message>>(userNick, messages));
-	iSendResult = send(ClientSocket, "inf:ok\r\n", 8, 0);
-	string buff;
-	string userto, text;
-	
-	// устанавливаем бит обновления для остальных клиентов
-	map<string,vector<message>>::iterator uit;
-	
-	// устанавливаем бит обновления для остальных клиентов
-	for (uit = usersList.begin(); uit != usersList.end(); ++uit) {
-		if (updateFlags.find(uit->first) == updateFlags.end())
-			updateFlags.insert(pair<string,bool>(uit->first, true));
-	}
-
-	while (1) {
-		// обработка команд
-		memset(recvbuf, 0, iResult);
-		iResult = recv(ClientSocket, recvbuf, 4, 0);
-		if (dflag)
-		{
-			cout << "command[" << iResult << "]" << string(recvbuf, iResult) << endl;
-		}
-
-		if (iResult == 0)
-		{
-			cout << GetCurrentProcessId() << ": " << userNick << " wrongly disconnected" << endl;
-			break;
-		}
-		else if (iResult == SOCKET_ERROR)
-		{
-			cout << GetCurrentProcessId() << ": "<< userNick << " has bad network connection" << endl;
-			break;
-		}
-
-		// команда получения списка пользователей
-		if (strncmp(recvbuf, "list", 4) == 0) {
-			cout << GetCurrentProcessId() << ": "<< userNick << " asks for list" << endl;
-			sendbuf.clear();
-			sendbuf += "lst ";
-			for (map<string,vector<message>>::iterator it = usersList.begin(); it != usersList.end(); ++it) {
-				// не первый элемент
-				if (it != usersList.begin())
-				{
-					sendbuf += ",";
-				}
-				sendbuf += it->first;
-			}
-			sendbuf += "\r\n";
-			if (dflag)
-			{
-				cout << "list: " << sendbuf << endl;
-			}
-			send(ClientSocket, sendbuf.c_str(), sendbuf.length(), 0);
-		} 
-		// команда отправки сообщения пользователю
-		else if (strncmp(recvbuf, "send", 4) == 0) {
-			cout << GetCurrentProcessId() << ": "<< userNick << " sends message";
-			char ns[5];
-			memset(ns, 0, 5);
-			int n = 0;
-			// number of bytes of nick name (2 digits: up to 99)
-			recv(ClientSocket, ns, 2, 0);
-			n = atoi(ns);
-			// read n bytes of nick name
-			memset(recvbuf, 0, 4);
-			recv(ClientSocket, recvbuf, n, 0);
-			userto = string(recvbuf, n);
-			cout << " to " << userto;
-			// number of bytes of text (3 digits: up to 999)
-			recv(ClientSocket, ns, 3, 0);
-			memset(recvbuf, 0, n);
-			n = atoi(ns);
-			cout << " of " << n << " byte(s)" << endl;
-			// read n bytes of text
-			recv(ClientSocket, recvbuf, n, 0);
-			text = string(recvbuf, n);
-			cout << "text: " << text << endl;
-
-			int sent = 0;
-			
-			// поиск пользователя
-			for (map<string,vector<message>>::iterator it = usersList.begin(); it != usersList.end(); ++it) {
-				if (it->first.compare(userto) == 0)
-				{
-					sent = 1;
-					message msg;
-					msg.userfrom = userNick;
-					msg.text = text;
-					it->second.push_back(msg);
-					send(ClientSocket, "inf:ok\r\n", 8, 0);
-					break;
-				}
-			}
-			if (sent == 0)
-			{
-				send(ClientSocket, "err:404\r\n", 9, 0);
-			}
-			
-		} 
-		else if (strncmp(recvbuf, "refr", 4) == 0) {
-			cout << GetCurrentProcessId() << ": "<< userNick << " refreshes" << endl;
-			// новые сообщения
-			map<string,bool>::iterator flag_it = updateFlags.find(userNick);
-			if (flag_it != updateFlags.end()) {
-				// шлем команду обновления списка пользователей
-				send(ClientSocket, "inf:newlist\r\n", 13, 0);
-				updateFlags.erase(flag_it);
-			} else {
-				map<string,vector<message>>::iterator it;
-				it = usersList.find(userNick);
-				if (it->second.size() > 0)
-				{
-					string sendbuf = generate_users_list();
-					for (vector<message>::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-						
-					}
-					it->second.clear();
-				}
-				else
-				{
-					send(ClientSocket, "inf:empty\r\n", 11, 0);
-				}
-			}
-		}
-
-		
-
-		Sleep(1000);
-	}
-
-	// удаляем сохраненые данные
-	uit = usersList.find(userNick);
-	usersList.erase(uit);
-	closesocket(ClientSocket);
-	// устанавливаем бит обновления для остальных клиентов
-	for (uit = usersList.begin(); uit != usersList.end(); ++uit) {
-		updateFlags.insert(pair<string,bool>(uit->first, true));
-	}
-	return 0;
-}
-*/
 string generate_users_list() 
 {
 	string buf;
-	for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it) {
+	for (map<string,SOCKET>::iterator it = usersList.begin(); it != usersList.end(); ++it) {
 		// не первый элемент
 		if (buf.size() > 0)
 		{
 			buf += ",";
 		}
-		buf += it->second;
-	}
-	return buf;
-}
-
-string generate_rooms_list()
-{
-	string buf;
-	for (map<string,vector<string>>::iterator it = roomsList.begin(); it != roomsList.end(); ++it) {
-		// не первый элемент
-		if (it != roomsList.begin())
-		{
-			buf += ",";
-		}
-		buf += "#";
 		buf += it->first;
 	}
 	return buf;
 }
 
-string generate_list()
-{
-	string buf;
-	for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it) {
-		// не первый элемент
-		if (it != socketsList.begin())
-		{
-			buf += ",";
-		}
-		buf += it->second;
-	}
-	for (map<string,vector<string>>::iterator it = roomsList.begin(); it != roomsList.end(); ++it) {
-		if (buf.size() > 0)
-		{
-			buf += ",";
-		}
-		buf += "#";
-		buf += it->first;
-	}
-	return buf;
-}
-
-map<SOCKET,string>::iterator searchInUsers(string username)
-{
-	map<SOCKET,string>::iterator iRet = socketsList.end();
-    for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it)
-    {
-        if (it->second == username)
-        {
-            iRet = it;
-            break;
-        }
-    }
-    return iRet;
-}
-
-void notificateConferenceUsers(int index, map<int,vector<string>>::iterator users)
+void notificateConferenceUsers(int index, map<int,vector<string>>::iterator conference)
 {
 	string sendbuf;
 	// уведомить пользователей конференции о конференции
 	sendbuf += "cnf #";
 	sendbuf += to_string(index);
 	sendbuf += " ";
-	for (vector<string>::iterator it = users->second.begin(); it != users->second.end(); ++it)
+	for (vector<string>::iterator it = conference->second.begin(); it != conference->second.end(); ++it)
 	{
-		if (it > users->second.begin())
+		if (it > conference->second.begin())
 		{
 			sendbuf += ";";
 		}
 		sendbuf += *it;
 	}
 	sendbuf += "\r\n";
-	for (vector<string>::iterator it = users->second.begin(); it != users->second.end(); ++it)
+	for (vector<string>::iterator it = conference->second.begin(); it != conference->second.end(); ++it)
 	{
-		send(getSocketByUser(*it), sendbuf.c_str(), sendbuf.size(), 0);
-	}
-}
-
-SOCKET getSocketByUser(string user)
-{
-	for (map<SOCKET,string>::iterator it = socketsList.begin(); it != socketsList.end(); ++it)
-	{
-		if (it->second.compare(user) == 0)
-		{
-			return it->first;
-		}
-	}
-	return INVALID_SOCKET;
-}
-
-void dumpVector(vector<string> vec)
-{
-	for (vector<string>::iterator it = vec.begin(); it != vec.end(); ++it)
-	{
-		if (it > vec.begin())
-			cout << ",";
-		cout << *it << endl;
+		send((usersList.find(*it))->second, sendbuf.c_str(), sendbuf.size(), 0);
 	}
 }
 
