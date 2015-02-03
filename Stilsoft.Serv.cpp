@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 #include "getopt.h"
+#include "misc.h"
 #include <sys/types.h>
 #include <algorithm>
 #define DEFAULT_PORT "27015"
@@ -22,7 +23,6 @@ fd_set readfds;
 map<int,vector<string>> conferences;
 
 string generate_users_list();
-string generate_rooms_list();
 string generate_list();
 DWORD WINAPI connections_accepter(LPVOID lpParam);
 map<string,vector<string>>::iterator createRoomIfNotExists(string room);
@@ -41,6 +41,14 @@ int _tmain(int argc, _TCHAR* argv[])
 	
 	char c;
 	__progname = argv[0];
+
+	NOTIFYICONDATA notifyicon;
+	notifyicon.hWnd = GetConoleHwnd();
+	lstrcpyn(notifyicon.szTip, "Stilsoft.Server", sizeof(notifyicon.szTip));
+	notifyicon.hIcon = ExtractIcon(NULL, "Icon.ico", 0);
+	notifyicon.uFlags = NIF_ICON | NIF_TIP;
+	notifyicon.cbSize = sizeof(notifyicon);
+	Shell_NotifyIcon(NIM_ADD, &notifyicon);
 
 	while ((c = getopt(argc, argv, "p:d")) != -1)
 	{
@@ -163,10 +171,10 @@ int _tmain(int argc, _TCHAR* argv[])
 			cout << errno << endl;
 			return 1;
 		}
-		if (dflag) {
-			cout << "select returned " << sResult << endl;
-			cout << " and fd_set.size = " << read_file_d.fd_count << endl;
-		}
+		//if (dflag) {
+		//	cout << "select returned " << sResult << endl;
+		//	cout << " and fd_set.size = " << read_file_d.fd_count << endl;
+		//}
 		if (sResult == 0)
 			continue;
 		for (map<string,SOCKET>::iterator it = usersList.begin(); it != usersList.end(); ++it)
@@ -313,10 +321,13 @@ int _tmain(int argc, _TCHAR* argv[])
 					size_t pos = usersString.size(), start = 0;
 					while ((pos = usersString.find(',', start)) != string::npos)
 					{
-						users.push_back(usersString.substr(start, pos - start));
+						if (pos > start)
+						{
+							users.push_back(usersString.substr(start, pos - start));
+						}
 						start = pos + 1;
 					}
-					if (start != usersString.size())
+					if (start != usersString.size() && pos > start)
 					{
 						users.push_back(usersString.substr(start, pos - start));
 					}
@@ -371,6 +382,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			//}
 		}
 	}
+	Shell_NotifyIcon(NIM_DELETE, &notifyicon);
 }
 
 DWORD WINAPI connections_accepter(LPVOID lpParam) {
@@ -417,7 +429,7 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 		for (map<string,SOCKET>::iterator it = usersList.begin(); it != usersList.end(); ++it) {
 			lstCommand(it->second);
 		}
-		// уведомить сокет о комнатах
+		/*// уведомить сокет о комнатах
 		if (roomsList.size() > 0)
 		{
 			sendbuf.clear();
@@ -425,14 +437,12 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 			sendbuf += generate_rooms_list();
 			sendbuf += "\r\n";
 			send(clientSocket, sendbuf.c_str(), sendbuf.length(), 0);
-		}
+		}*/
 	}
 	closesocket(listenSocket);
 	WSACleanup();
 	return 0;
 }
-
-
 
 string generate_users_list() 
 {
@@ -463,7 +473,7 @@ void notificateConferenceUsers(int index, map<int,vector<string>>::iterator conf
 		}
 		sendbuf += *it;
 	}
-	sendbuf += "\r\n";
+	//sendbuf += "\r\n";
 	for (vector<string>::iterator it = conference->second.begin(); it != conference->second.end(); ++it)
 	{
 		send((usersList.find(*it))->second, sendbuf.c_str(), sendbuf.size(), 0);
