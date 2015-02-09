@@ -13,18 +13,18 @@
 #include <sys/types.h>
 #include <algorithm>
 #define DEFAULT_PORT "27015"
-#define BUFFER_LENGTH 512
+#define BUFFER_LENGTH 1024
 
 using namespace std;
 
 map<string,SOCKET> usersList;
-map<string,vector<string>> roomsList;
 fd_set readfds;
 map<int,vector<string>> conferences;
 
 string generate_users_list();
 string generate_list();
 DWORD WINAPI connections_accepter(LPVOID lpParam);
+DWORD WINAPI file_transmitter(LPVOID lpParam);
 map<string,vector<string>>::iterator createRoomIfNotExists(string room);
 void lstCommand(SOCKET socket);
 
@@ -232,7 +232,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 				if (strncmp(recvbuf, "send", 4) == 0)
 				{
-					cout << it->first << " sends message";
+					cout << it->first << "  ";
 					char ns[5];
 					int n = 0;
 					int n2 = 0;
@@ -375,6 +375,48 @@ int _tmain(int argc, _TCHAR* argv[])
 					lstCommand(it->second);
 				} else if (strncmp(recvbuf, "quit", 4) == 0) {
 					
+				} else if (strncmp(recvbuf, "file", 4) == 0) {
+					cout << it->first << " sends file";
+					char* pos = strchr(recvbuf, ':');
+					if (pos != NULL) {
+						string filename(recvbuf+5, pos - recvbuf - 5);
+						cout << " filename: " << filename;
+						unsigned int filesize = atoi(pos+1);
+						cout << " filesize: " << filesize;
+						pos = strchr(pos+1, ':');
+						if (pos != NULL) {
+							string userto(pos+1, rResult - (pos+1 - recvbuf));
+							cout << " to user " << userto << endl;
+							map<string,SOCKET>::iterator u_it = usersList.find(userto);
+							if (u_it != usersList.end()) {
+								send(it->second, "ok", 2, 0);
+								unsigned long ulMode = 0;
+								ioctlsocket(it->second, FIONBIO, (unsigned long*)&ulMode);
+								sendbuf.clear();
+								sendbuf = "file ";
+								sendbuf += filename;
+								sendbuf += ":";
+								sendbuf += to_string(filesize);
+								sendbuf += ":";
+								sendbuf += it->first;
+								send(u_it->second, sendbuf.c_str(), sendbuf.size(), 0);
+								while (filesize > 0) {
+									rResult = recv(it->second, recvbuf, 1024, 0);
+									filesize -= rResult;
+									send(u_it->second, recvbuf, rResult, 0);
+								}
+								ulMode = 1;
+								ioctlsocket(it->second, FIONBIO, (unsigned long*)&ulMode);
+								cout << "... complete" << endl;
+							} else {
+								cout << "invalid format" << endl;
+							}
+						} else {
+							cout << "invalid format" << endl;
+						}
+					} else {
+						cout << "invalid format" << endl;
+					}
 				}
 				memset(recvbuf, 0, rResult);
 			}// else if (FD_ISSET(it->first, &except_file_d)) {
@@ -488,4 +530,7 @@ void lstCommand(SOCKET socket)
 	sendbuf += generate_users_list();
 	sendbuf += "\r\n";
 	send(socket, sendbuf.c_str(), sendbuf.length(), 0);
+}
+
+DWORD WINAPI file_transmitter(LPVOID lpParam) {
 }
