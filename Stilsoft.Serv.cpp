@@ -27,6 +27,11 @@ DWORD WINAPI connections_accepter(LPVOID lpParam);
 DWORD WINAPI file_transmitter(LPVOID lpParam);
 map<string,vector<string>>::iterator createRoomIfNotExists(string room);
 void lstCommand(SOCKET socket);
+void sendMsg(SOCKET socket, string sender, string message);
+void sendMsgInConf(string sender, string message, int conference, vector<string> users, map<string,SOCKET>sockets);
+void cnfCommand(SOCKET socket, int conference, vector<string> users);
+void cnfCommandToAll(int conference, vector<string> users, map<string,SOCKET> sockets);
+void errCommand(SOCKET socket, int error);
 
 void notificateConferenceUsers(int index, map<int,vector<string>>::iterator users);
 
@@ -171,10 +176,6 @@ int _tmain(int argc, _TCHAR* argv[])
 			cout << errno << endl;
 			return 1;
 		}
-		//if (dflag) {
-		//	cout << "select returned " << sResult << endl;
-		//	cout << " and fd_set.size = " << read_file_d.fd_count << endl;
-		//}
 		if (sResult == 0)
 			continue;
 		for (map<string,SOCKET>::iterator it = usersList.begin(); it != usersList.end(); ++it)
@@ -221,7 +222,7 @@ int _tmain(int argc, _TCHAR* argv[])
 							else
 							{
 								cout << "#" << it2->first << " conference updated" << endl;
-								notificateConferenceUsers(it2->first, it2);
+								cnfCommandToAll(it2->first, it2->second, usersList);
 							}
 						}
 					}
@@ -232,88 +233,64 @@ int _tmain(int argc, _TCHAR* argv[])
 
 				if (strncmp(recvbuf, "send", 4) == 0)
 				{
-					cout << it->first << "  ";
-					char ns[5];
-					int n = 0;
-					int n2 = 0;
-					memset(ns, 0, 5);
-					if (strlen(recvbuf) >= 7)
+					cout << it->first << " sends message ";
+					char* user_pos = strchr(recvbuf, ':');
+					if (user_pos != NULL)
 					{
-						strncpy_s(ns, 5, recvbuf+5, 2);
-						n = atoi(ns);
-						if (strlen(recvbuf) >= 7+n)
+						char* message_pos = strchr(user_pos+1, ':');
+						if (message_pos != NULL)
 						{
-							userto = string(recvbuf, 7, n);
-							cout << " to " << userto;
-							memset(ns, 0, 5);
-							if (strlen(recvbuf) >= 10+n)
-							{
-								strncpy_s(ns, 5, recvbuf+7+n, 3);
-								n2 = atoi(ns);
-								cout << " of " << n2 << " byte(s)" << endl;
-								text = string(recvbuf, 7+n+3, n2);
-								cout << "text: " << text << endl;
+							string user = string(user_pos+1, message_pos-user_pos-1);
+							cout << "to user [" << user << "] ";
+							string text = string(message_pos+1, rResult - (message_pos - recvbuf));
+							cout << "with text " << text << endl;
 
-								// поиск пользователя
-								map<string,SOCKET>::iterator it2 = usersList.find(userto);
-								if (it2 != usersList.end())
+							// поиск пользователя
+							map<string,SOCKET>::iterator user_it = usersList.find(user);
+							if (user_it != usersList.end())
+							{
+								sendMsg(user_it->second, it->first, text);
+								break;
+							}
+							// иначе, поиск комнаты
+							else if (user[0] == '#')
+							{
+								user = user.substr(1, string::npos);
+								int conference = atoi(user.c_str());
+								map<int,vector<string>>::iterator conf_it;
+								// цикл поиска комнаты
+								conf_it = conferences.find(conference);
+								if (conf_it != conferences.end())
 								{
-									sendbuf.clear();
-									sendbuf += "msg ";
-									sendbuf += it->first;
-									sendbuf += ":";
-									sendbuf += text;
-									//sendbuf += "\r\n";
-									send(it2->second, sendbuf.c_str(), sendbuf.length(), 0);
-									break;
-								}
-								// иначе, поиск комнаты
-								if (userto[0] == '#')
-								{
-									userto = userto.substr(1, string::npos);
-									int index = atoi(userto.c_str());
-									map<int,vector<string>>::iterator conf_it;
-									// цикл поиска комнаты
-									conf_it = conferences.find(index);
-									if (conf_it != conferences.end())
+									// защита от письма в комнату, в которой не состоишь
+									if (find(conf_it->second.begin(), conf_it->second.end(), it->first) != conf_it->second.end())
 									{
-										// защита от письма в комнату, в которой не состоишь
-										if (find(conf_it->second.begin(), conf_it->second.end(), it->first) != conf_it->second.end())
-										{
-											sendbuf.clear();
-											sendbuf += "msg #";
-											sendbuf += to_string(conf_it->first);
-											sendbuf += "|";
-											sendbuf += it->first;
-											sendbuf += ":";
-											sendbuf += text;
-											// цикл перебора пользователей
-											for (vector<string>::iterator it4 = conf_it->second.begin(); it4 != conf_it->second.end(); ++it4)
-											{
-												if (it->first.compare(*it4) == 0)
-													continue;
-												// получение сокета пользователя
-												map<string,SOCKET>::iterator user = usersList.find(*it4);
-												send(user->second, sendbuf.c_str(), sendbuf.length(), 0);
-											}
-											break;
-										}
+										sendMsgInConf(it->first, text, conf_it->first, conf_it->second, usersList);
+										break;
+									}
+									else
+									{
+										cout << "access restriction" << endl;
+										errCommand(it->second, 3);
 									}
 								}
-							}
-							else
+								else
+								{
+									errCommand(it->second, 8);
+								}
+							} else 
 							{
-								cout << "invalid message" << endl;
+								errCommand(it->second, 2);
 							}
 						}
 						else
 						{
-							cout << "invalid message" << endl;
+							errCommand(it->second, 4);
 						}
 					}
 					else
 					{
-						cout << "invalid message" << endl;
+						errCommand(it->second, 5);
 					}
 				} else if (strncmp(recvbuf, "conf", 4) == 0) {
 					string usersString(recvbuf+5, rResult-5);
@@ -334,13 +311,11 @@ int _tmain(int argc, _TCHAR* argv[])
 					sort(users.begin(), users.end());
 					if (find(users.begin(), users.end(), it->first) == users.end())
 					{
-						cout << "err:not present" << endl;
-						send(it->second, "err", 3, 0);
+						errCommand(it->second, 6);
 					} 
 					else if (users.size() < 3)
 					{
-						cout << "err:invalid command" << endl;
-						send(it->second, "err", 3, 0);
+						errCommand(it->second, 7);
 					}
 					else
 					{
@@ -359,7 +334,7 @@ int _tmain(int argc, _TCHAR* argv[])
 						{
 							index = pos->first;
 							cout << "conf id #" << index << endl;
-							notificateConferenceUsers(index, pos);
+							cnfCommand(it->second, pos->first, pos->second);
 						}
 						else
 						{
@@ -368,7 +343,7 @@ int _tmain(int argc, _TCHAR* argv[])
 							conferences.insert(pair<int,vector<string>>(index, users));
 							cout << "id #" << index << endl;
 							pos = conferences.find(index);
-							notificateConferenceUsers(index, pos);
+							cnfCommandToAll(pos->first, pos->second, usersList);
 						}
 					}
 				} else if (strncmp(recvbuf, "list", 4) == 0) {
@@ -420,6 +395,9 @@ int _tmain(int argc, _TCHAR* argv[])
 				}
 				memset(recvbuf, 0, rResult);
 			}// else if (FD_ISSET(it->first, &except_file_d)) {
+
+			//}
+
 			//	cout << it->second << " in exceptfds" << endl;
 			//}
 		}
@@ -456,8 +434,7 @@ DWORD WINAPI connections_accepter(LPVOID lpParam) {
 		// проверка занятости ника
 
 		if (usersList.find(userNick) != usersList.end()) {
-			cout << "err:already logged" << endl;
-			send(clientSocket, "err", 3, 0);
+			errCommand(clientSocket, 1);
 			Sleep(1500);
 			closesocket(clientSocket);
 			continue;
@@ -500,37 +477,83 @@ string generate_users_list()
 	return buf;
 }
 
-void notificateConferenceUsers(int index, map<int,vector<string>>::iterator conference)
+void sendMsg(SOCKET socket, string sender, string message)
 {
 	string sendbuf;
-	// уведомить пользователей конференции о конференции
-	sendbuf += "cnf #";
-	sendbuf += to_string(index);
-	sendbuf += " ";
-	for (vector<string>::iterator it = conference->second.begin(); it != conference->second.end(); ++it)
+	sendbuf = "msg:";
+	sendbuf += sender;
+	sendbuf += ":";
+	sendbuf += message;
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
+}
+
+void sendMsgInConf(string sender, string message, int conference, vector<string> users, map<string,SOCKET>sockets)
+{
+	string sendbuf;
+	sendbuf += "msg:#";
+	sendbuf += to_string(conference);
+	sendbuf += ":";
+	sendbuf += sender;
+	sendbuf += ":";
+	sendbuf += message;
+	// цикл перебора пользователей
+	for (vector<string>::iterator user_it = users.begin(); user_it != users.end(); ++user_it)
 	{
-		if (it > conference->second.begin())
-		{
-			sendbuf += ";";
-		}
-		sendbuf += *it;
-	}
-	//sendbuf += "\r\n";
-	for (vector<string>::iterator it = conference->second.begin(); it != conference->second.end(); ++it)
-	{
-		send((usersList.find(*it))->second, sendbuf.c_str(), sendbuf.size(), 0);
+		if (sender.compare(*user_it) == 0)
+			continue;
+		map<string,SOCKET>::iterator user = sockets.find(*user_it);
+		send(user->second, sendbuf.c_str(), sendbuf.length(), 0);
 	}
 }
 
 void lstCommand(SOCKET socket)
 {
 	string sendbuf;
-	sendbuf.clear();
-	sendbuf += "lst ";
+	sendbuf += "lst:";
 	sendbuf += generate_users_list();
-	sendbuf += "\r\n";
-	send(socket, sendbuf.c_str(), sendbuf.length(), 0);
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
 }
 
-DWORD WINAPI file_transmitter(LPVOID lpParam) {
+void cnfCommand(SOCKET socket, int conference, vector<string> users)
+{
+	string sendbuf;
+	sendbuf += "cnf:";
+	sendbuf += to_string(conference);
+	sendbuf += ":";
+	for (vector<string>::iterator it = users.begin(); it != users.end(); ++it)
+	{
+		if (it > users.begin())
+			sendbuf += ",";
+		sendbuf += *it;
+	}
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
+}
+
+void cnfCommandToAll(int conference, vector<string> users, map<string,SOCKET> sockets)
+{
+	string sendbuf;
+	// уведомить пользователей конференции о конференции
+	sendbuf += "cnf:";
+	sendbuf += to_string(conference);
+	sendbuf += ":";
+	for (vector<string>::iterator user_it = users.begin(); user_it != users.end(); ++user_it)
+	{
+		if (user_it > users.begin())
+		{
+			sendbuf += ",";
+		}
+		sendbuf += *user_it;
+	}
+	for (vector<string>::iterator user_it = users.begin(); user_it != users.end(); ++user_it)
+	{
+		send((sockets.find(*user_it))->second, sendbuf.c_str(), sendbuf.size(), 0);
+	}
+}
+
+void errCommand(SOCKET socket, int error)
+{
+	string sendbuf;
+	sendbuf += "err:";
+	sendbuf += to_string(error);
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
 }
