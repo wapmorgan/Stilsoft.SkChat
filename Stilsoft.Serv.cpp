@@ -32,6 +32,7 @@ void sendMsgInConf(string sender, string message, int conference, vector<string>
 void cnfCommand(SOCKET socket, int conference, vector<string> users);
 void cnfCommandToAll(int conference, vector<string> users, map<string,SOCKET> sockets);
 void errCommand(SOCKET socket, int error);
+void filCommand(SOCKET socket, string filename, int filesize, string sender);
 
 void notificateConferenceUsers(int index, map<int,vector<string>>::iterator users);
 
@@ -352,29 +353,23 @@ int _tmain(int argc, _TCHAR* argv[])
 					
 				} else if (strncmp(recvbuf, "file", 4) == 0) {
 					cout << it->first << " sends file";
-					char* pos = strchr(recvbuf, ':');
-					if (pos != NULL) {
-						string filename(recvbuf+5, pos - recvbuf - 5);
+					char* size_pos = strchr(recvbuf+5, ':');
+					if (size_pos != NULL) {
+						string filename(recvbuf+5, size_pos - (recvbuf+5));
 						cout << " filename: " << filename;
-						unsigned int filesize = atoi(pos+1);
+						cout << size_pos << endl;
+						unsigned int filesize = atoi(size_pos+1);
 						cout << " filesize: " << filesize;
-						pos = strchr(pos+1, ':');
-						if (pos != NULL) {
-							string userto(pos+1, rResult - (pos+1 - recvbuf));
+						char* user_pos = strchr(size_pos+1, ':');
+						if (user_pos != NULL) {
+							string userto(user_pos+1, rResult - (user_pos+1 - recvbuf));
 							cout << " to user " << userto << endl;
 							map<string,SOCKET>::iterator u_it = usersList.find(userto);
 							if (u_it != usersList.end()) {
 								send(it->second, "ok", 2, 0);
 								unsigned long ulMode = 0;
 								ioctlsocket(it->second, FIONBIO, (unsigned long*)&ulMode);
-								sendbuf.clear();
-								sendbuf = "file ";
-								sendbuf += filename;
-								sendbuf += ":";
-								sendbuf += to_string(filesize);
-								sendbuf += ":";
-								sendbuf += it->first;
-								send(u_it->second, sendbuf.c_str(), sendbuf.size(), 0);
+								filCommand(u_it->second, filename, filesize, it->first);
 								while (filesize > 0) {
 									rResult = recv(it->second, recvbuf, 1024, 0);
 									filesize -= rResult;
@@ -387,7 +382,7 @@ int _tmain(int argc, _TCHAR* argv[])
 								cout << "invalid format" << endl;
 							}
 						} else {
-							cout << "invalid format" << endl;
+						cout << "invalid format" << endl;
 						}
 					} else {
 						cout << "invalid format" << endl;
@@ -555,5 +550,17 @@ void errCommand(SOCKET socket, int error)
 	string sendbuf;
 	sendbuf += "err:";
 	sendbuf += to_string(error);
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
+}
+
+void filCommand(SOCKET socket, string filename, int filesize, string sender)
+{
+	string sendbuf;
+	sendbuf = "fil:";
+	sendbuf += filename;
+	sendbuf += ":";
+	sendbuf += to_string(filesize);
+	sendbuf += ":";
+	sendbuf += sender;
 	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
 }
