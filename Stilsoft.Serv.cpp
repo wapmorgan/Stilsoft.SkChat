@@ -26,6 +26,16 @@ string generate_list();
 DWORD WINAPI connections_accepter(LPVOID lpParam);
 DWORD WINAPI file_transmitter(LPVOID lpParam);
 map<string,vector<string>>::iterator createRoomIfNotExists(string room);
+
+struct fileinfo {
+	string filename;
+	string sender;
+	string receiver;
+	unsigned int filesize;
+};
+
+map<unsigned int, fileinfo*> files;
+
 void lstCommand(SOCKET socket);
 void sendMsg(SOCKET socket, string sender, string message);
 void sendMsgInConf(string sender, string message, int conference, vector<string> users, map<string,SOCKET>sockets);
@@ -33,6 +43,9 @@ void cnfCommand(SOCKET socket, int conference, vector<string> users);
 void cnfCommandToAll(int conference, vector<string> users, map<string,SOCKET> sockets);
 void errCommand(SOCKET socket, int error);
 void filCommand(SOCKET socket, string filename, int filesize, string sender);
+void fileRequestCommand(SOCKET socket, fileinfo* file, unsigned int index);
+void fileConfirmationCommand(SOCKET socket, unsigned int index, bool result);
+void fileDataCommand(SOCKET socket, char* buffer, size_t buffsize);
 
 void notificateConferenceUsers(int index, map<int,vector<string>>::iterator users);
 
@@ -352,14 +365,86 @@ int _tmain(int argc, _TCHAR* argv[])
 				} else if (strncmp(recvbuf, "quit", 4) == 0) {
 					
 				} else if (strncmp(recvbuf, "file", 4) == 0) {
-					cout << it->first << " sends file";
-					char* size_pos = strchr(recvbuf+5, ':');
-					if (size_pos != NULL) {
+					char mode = recvbuf[5];
+					fileinfo* file;
+					unsigned int index;
+					char* size_pos;
+					char* receiver_pos;
+					bool result;
+					SOCKET sender;
+					SOCKET receiver;
+					switch (mode) {
+						// information: file:i:README.txt:7:receiver
+						case 'i': {
+							size_pos = strchr(recvbuf+7, ':');
+							receiver_pos = strchr(size_pos+1, ':');
+							if (size_pos == NULL || receiver_pos == NULL) {
+								errCommand(it->second, 9);
+								continue;
+							}
+							/*int filename_len = size_pos - (recvbuf + 7);
+							char* filename = (char*)malloc(filename_len+1);
+							memcpy(filename, recvbuf+7, filename_len);
+							filename[filename_len] = '\0';
+							int sender_len = size_pos - (recvbuf + 7);
+							char* filename = (char*)malloc(filename_len+1);
+							memcpy(filename, recvbuf+7, filename_len);
+							filename[filename_len] = '\0';*/
+							file = new fileinfo;
+							string filename = string(recvbuf+7, size_pos - (recvbuf + 7));
+							string receiver = string(receiver_pos+1, rResult - (receiver_pos+1-recvbuf));
+							file->filename = filename;
+							file->filesize = atoi(size_pos+1);
+							file->sender = it->first;
+							file->receiver = receiver;
+							cout << file->receiver << endl;
+							if (usersList.find(file->receiver) == usersList.end()) {
+								errCommand(it->second, 10);
+								continue;
+							}
+							cout << "new file: " << file->filename << "; size - " << file->filesize << "; sender - " << file->sender << "; receiver - " << file->receiver << endl;
+							index = files.size();
+							files.insert(pair<unsigned int, fileinfo*>(index, file));
+							fileRequestCommand(usersList.find(file->receiver)->second, file, index);
+							break;
+						}
+						// confirmation: file:c:10:1
+						case 'c':
+							index = atoi(recvbuf+7);
+							if (files.find(index) == files.end()) {
+								errCommand(it->second, 11);
+								continue;
+							}
+							if (*(strchr(recvbuf+7, ':')+1) == '1')
+								result = true;
+							else
+								result = false;
+							//result = ((char)(strchr(recvbuf+7, ':')+1) == '1' ? true : false);
+							file = files.find(index)->second;
+							cout << "[debug] file: " << file->filename << "; size - " << file->filesize << "; sender - " << file->sender << "; receiver - " << file->receiver << endl;
+							fileConfirmationCommand(usersList.find(file->sender)->second, index, result);
+							cout << "index: " << index << "; result - " << result << endl;
+							break;
+						// data: file:d:10:0:...
+						case 'd':
+							index = atoi(recvbuf+7);
+							if (files.find(index) == files.end()) {
+								errCommand(it->second, 11);
+								continue;
+							}
+							file = files.find(index)->second;
+							cout << "resending data to " << usersList.find(file->receiver)->first << endl;
+							fileDataCommand(usersList.find(file->receiver)->second, recvbuf, rResult);
+							cout << "file data portion: " << index << endl;
+							break;
+					}
+
+					//char* size_pos = strchr(recvbuf+5, ':');
+					/*if (size_pos != NULL) {
 						string filename(recvbuf+5, size_pos - (recvbuf+5));
 						cout << " filename: " << filename;
 						cout << size_pos << endl;
 						unsigned int filesize = atoi(size_pos+1);
-						cout << " filesize: " << filesize;
 						char* user_pos = strchr(size_pos+1, ':');
 						if (user_pos != NULL) {
 							string userto(user_pos+1, rResult - (user_pos+1 - recvbuf));
@@ -386,7 +471,7 @@ int _tmain(int argc, _TCHAR* argv[])
 						}
 					} else {
 						cout << "invalid format" << endl;
-					}
+					}*/
 				}
 				memset(recvbuf, 0, rResult);
 			}// else if (FD_ISSET(it->first, &except_file_d)) {
@@ -563,4 +648,34 @@ void filCommand(SOCKET socket, string filename, int filesize, string sender)
 	sendbuf += ":";
 	sendbuf += sender;
 	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
+}
+
+void fileRequestCommand(SOCKET socket, fileinfo* file, unsigned int index)
+{
+	string sendbuf;
+	sendbuf = "file:r:";
+	sendbuf += file->filename;
+	sendbuf += ":";
+	sendbuf += to_string(file->filesize);
+	sendbuf += ":";
+	sendbuf += file->sender;
+	sendbuf += ":";
+	sendbuf += to_string(index);
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
+}
+
+void fileConfirmationCommand(SOCKET socket, unsigned int index, bool result)
+{
+	string sendbuf;
+	sendbuf = "file:i:";
+	sendbuf += to_string(index);
+	sendbuf += ":";
+	sendbuf += result == TRUE ? '1' : '0';
+	send(socket, sendbuf.c_str(), sendbuf.size(), 0);
+}
+
+void fileDataCommand(SOCKET socket, char* buffer, size_t buffsize)
+{
+	cout << "sends buffer " << buffsize << endl;
+	send(socket, buffer, buffsize, 0);
 }
